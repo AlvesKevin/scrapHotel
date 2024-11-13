@@ -1,0 +1,30 @@
+# Fichiers JSON
+*.json
+
+# Environnement virtuel
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# Fichiers Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Système d'exploitation
+.DS_Store
+Thumbs.db
