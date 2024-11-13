@@ -66,94 +66,107 @@ class IHGScraper:
         return url
 
     def accept_cookies(self):
-        """Accepte les cookies s'ils sont prsents"""
+        """Accepte les cookies s'ils sont présents"""
         try:
-            # Attendre que le bouton des cookies soit présent (maximum 10 secondes)
             cookie_button = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#truste-consent-button"))
             )
             cookie_button.click()
             logging.info("Cookies acceptés")
-            time.sleep(2)  # Attendre que la bannière disparaisse
         except TimeoutException:
             logging.info("Pas de bannière de cookies à accepter")
         except Exception as e:
             logging.error(f"Erreur lors de l'acceptation des cookies: {str(e)}")
 
     def scrape_hotel_list(self, url, currency, corporate_name=None, corporate_code=None):
-        """Scrape tous les hôtels de la liste"""
         try:
             self.driver.get(url)
             logging.info(f"Navigation vers {url}")
             
-            # Accepter les cookies si nécessaire
             self.accept_cookies()
             
-            # Attendre que la liste des hôtels charge
-            WebDriverWait(self.driver, 20).until(
+            # Augmenter le temps d'attente pour le chargement initial
+            WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "hotel-card-list-view-container"))
             )
             
-            # Changer la devise
-            self.change_currency(currency)
+            def scroll_and_get_hotels():
+                # Faire défiler jusqu'à ce que tous les hôtels soient chargés
+                last_height = self.driver.execute_script("return document.body.scrollHeight")
+                while True:
+                    # Défiler jusqu'en bas
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(2)  # Augmenter le délai d'attente
+                    
+                    # Calculer la nouvelle hauteur
+                    new_height = self.driver.execute_script("return document.body.scrollHeight")
+                    if new_height == last_height:
+                        break
+                    last_height = new_height
+                
+                return self.driver.find_elements(By.CLASS_NAME, "hotel-card-list-view-container")
             
             processed_hotels = 0
             while True:
                 try:
-                    # Recharger la liste des hôtels et boutons
-                    hotel_cards = WebDriverWait(self.driver, 20).until(
-                        EC.presence_of_all_elements_located((By.CLASS_NAME, "hotel-card-list-view-container"))
-                    )
+                    hotel_cards = scroll_and_get_hotels()
+                    total_hotels = len(hotel_cards)
+                    logging.info(f"Nombre total d'hôtels trouvés : {total_hotels}")
                     
-                    if processed_hotels >= len(hotel_cards):
-                        logging.info("Tous les hôtels ont été traités")
+                    if processed_hotels >= total_hotels:
+                        logging.info(f"Tous les hôtels ont été traités ({processed_hotels}/{total_hotels})")
                         break
                     
-                    # Traiter l'hôtel courant
                     current_card = hotel_cards[processed_hotels]
                     
-                    # Récupérer les informations avant de cliquer
+                    # Attendre que les éléments soient chargés
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "[data-slnm-ihg='brandHotelNameSID']"))
+                    )
+                    
                     hotel_name = current_card.find_element(By.CSS_SELECTOR, "[data-slnm-ihg='brandHotelNameSID']").text
-                    button = current_card.find_element(By.CSS_SELECTOR, "button[data-slnm-ihg^='selectHotelSID']")
+                    
+                    # Attendre que le bouton soit cliquable
+                    button = WebDriverWait(current_card, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "button[data-slnm-ihg^='selectHotelSID']"))
+                    )
                     hotel_id = button.get_attribute('data-slnm-ihg').split('_')[1]
                     
-                    logging.info(f"Tentative de clic sur l'hôtel {processed_hotels + 1}/{len(hotel_cards)}: {hotel_name} (ID: {hotel_id})")
+                    logging.info(f"Traitement de l'hôtel {processed_hotels + 1}/{total_hotels}: {hotel_name} (ID: {hotel_id})")
                     
-                    # Faire défiler jusqu'au bouton et cliquer
-                    self.driver.execute_script("arguments[0].scrollIntoView(true);", button)
-                    time.sleep(1)
-                    button.click()
+                    # Faire défiler jusqu'au bouton avec un offset
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+                    time.sleep(2)  # Attendre après le défilement
                     
-                    # Attendre que la page de l'hôtel charge
-                    WebDriverWait(self.driver, 20).until(
+                    # Cliquer avec JavaScript
+                    self.driver.execute_script("arguments[0].click();", button)
+                    logging.info(f"Bouton cliqué pour l'hôtel: {hotel_name}")
+                    
+                    # Attendre que la page des chambres charge
+                    WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located((By.CSS_SELECTOR, "app-room-rate-item"))
                     )
                     
+                    self.change_currency(currency)
+                    
                     hotel_chain = hotel_name.split()[0]
-                    logging.info(f"Traitement de l'hôtel: {hotel_name}")
-                    
-                    # Scraper les chambres
                     self.scrape_rooms(hotel_name, hotel_chain, currency, corporate_name, corporate_code)
-                    
-                    # Sauvegarder après chaque hôtel
                     self.save_data()
                     
-                    # Incrémenter le compteur
                     processed_hotels += 1
                     
-                    # Retourner à la liste des hôtels
                     self.driver.get(url)
-                    logging.info(f"Retour à la liste des hôtels après {hotel_name}")
-                    
                     # Attendre que la liste se recharge
-                    time.sleep(3)
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "hotel-card-list-view-container"))
+                    )
                     
                 except Exception as e:
                     logging.error(f"Erreur lors du traitement de l'hôtel {processed_hotels + 1}: {str(e)}")
                     if 'hotel_id' in locals():
                         logging.error(f"ID de l'hôtel problématique: {hotel_id}")
                     self.driver.get(url)
-                    time.sleep(3)
+                    processed_hotels += 1  # Passer à l'hôtel suivant en cas d'erreur
                     continue
                 
         except Exception as e:
@@ -195,52 +208,100 @@ class IHGScraper:
         logging.info(f"Prix mis à jour pour {room_name}: {price} {currency} {corporate_name if corporate_name else 'sans code corporate'}")
 
     def scrape_rooms(self, hotel_name, hotel_chain, currency, corporate_name, corporate_code):
-        """Scrape les informations de chaque chambre"""
-        rooms = self.driver.find_elements(By.CSS_SELECTOR, "app-room-rate-item")
-        logging.info(f"Nombre de chambres trouvées pour {hotel_name}: {len(rooms)}")
-        
-        for room_index, room in enumerate(rooms, 1):
-            try:
-                room_name = room.find_element(By.CSS_SELECTOR, "h2.roomName").text
-                logging.info(f"Traitement de la chambre {room_index}/{len(rooms)}: {room_name}")
-                
-                view_prices_btn = room.find_element(By.CSS_SELECTOR, "app-expandable-button button")
-                view_prices_btn.click()
-                logging.info(f"Affichage des prix pour {room_name}")
-                
-                time.sleep(2)
-                
-                rates = room.find_elements(By.CSS_SELECTOR, "#rateNameOrPolicy")
-                prices = room.find_elements(By.CSS_SELECTOR, "#price-rate")
-                
-                for rate, price in zip(rates, prices):
-                    breakfast = "Non"
+        try:
+            # Attendre que toutes les chambres soient chargées
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "app-room-rate-item"))
+            )
+            
+            rooms = self.driver.find_elements(By.CSS_SELECTOR, "app-room-rate-item")
+            logging.info(f"Nombre de chambres trouvées pour {hotel_name}: {len(rooms)}")
+            
+            for room_index, room in enumerate(rooms, 1):
+                try:
+                    room_name = room.find_element(By.CSS_SELECTOR, "h2.roomName").text
+                    
+                    # Fermer d'abord l'icône de fermeture si elle existe
                     try:
-                        if room.find_element(By.CSS_SELECTOR, "#meals"):
-                            breakfast = "Oui"
-                    except NoSuchElementException:
+                        close_icon = self.driver.find_element(By.CSS_SELECTOR, "div.close_icon")
+                        if close_icon.is_displayed():
+                            close_icon.click()
+                            time.sleep(1)
+                    except:
                         pass
                     
-                    self.update_room_data(
-                        hotel_name=hotel_name,
-                        hotel_chain=hotel_chain,
-                        room_name=room_name,
-                        rate_name=rate.text,
-                        price=price.text,
-                        currency=currency,
-                        breakfast=breakfast,
-                        corporate_name=corporate_name,
-                        corporate_code=corporate_code
+                    # Attendre que le bouton soit cliquable
+                    view_prices_btn = WebDriverWait(room, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, "app-expandable-button button"))
                     )
                     
-            except Exception as e:
-                logging.error(f"Erreur lors du scraping de la chambre {room_name}: {str(e)}")
+                    # Faire défiler jusqu'au bouton
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", view_prices_btn)
+                    time.sleep(1)
+                    
+                    # Essayer de cliquer avec JavaScript si le clic normal échoue
+                    try:
+                        view_prices_btn.click()
+                    except:
+                        self.driver.execute_script("arguments[0].click();", view_prices_btn)
+                    
+                    # Attendre que les prix se chargent
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "#rateNameOrPolicy"))
+                    )
+                    
+                    rates = room.find_elements(By.CSS_SELECTOR, "#rateNameOrPolicy")
+                    prices = room.find_elements(By.CSS_SELECTOR, "#price-rate")
+                    
+                    for rate, price in zip(rates, prices):
+                        breakfast = "Non"
+                        try:
+                            if room.find_element(By.CSS_SELECTOR, "#meals"):
+                                breakfast = "Oui"
+                        except NoSuchElementException:
+                            pass
+                        
+                        self.update_room_data(
+                            hotel_name=hotel_name,
+                            hotel_chain=hotel_chain,
+                            room_name=room_name,
+                            rate_name=rate.text,
+                            price=price.text,
+                            currency=currency,
+                            breakfast=breakfast,
+                            corporate_name=corporate_name,
+                            corporate_code=corporate_code
+                        )
+                        
+                except Exception as e:
+                    logging.error(f"Erreur lors du scraping de la chambre {room_name}: {str(e)}")
+                    continue
+
+        except Exception as e:
+            logging.error(f"Erreur lors du scraping des chambres: {str(e)}")
 
     def change_currency(self, currency):
-        """Change la devise"""
         try:
-            # Logique pour changer la devise
-            pass
+            # Réduire à 5 secondes car les éléments sont déjà chargés
+            currency_dropdown = WebDriverWait(self.driver, 1).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "div.ui-dropdown-label-container"))
+            )
+            currency_dropdown.click()
+            
+            currency_option = WebDriverWait(self.driver, 1).until(
+                EC.element_to_be_clickable((By.XPATH, f"//p-dropdownitem//span[text()='{currency}']"))
+            )
+            currency_option.click()
+            
+            # Attendre seulement 2 secondes pour la mise à jour des prix
+            WebDriverWait(self.driver, 1).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "#price-rate"))
+            )
+            
+            logging.info(f"Devise changée pour {currency}")
+            
+        except TimeoutException:
+            logging.error(f"Timeout lors du changement de devise vers {currency}")
         except Exception as e:
             logging.error(f"Erreur lors du changement de devise: {str(e)}")
 
