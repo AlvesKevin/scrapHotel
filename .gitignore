@@ -1,30 +1,47 @@
-# Fichiers JSON
-*.json
-
 # Environnement virtuel
 .venv/
 venv/
 env/
-
-# Logs
-*.log
+ENV/
 
 # Fichiers Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 
 # Distribution / packaging
 dist/
 build/
 *.egg-info/
 
-# IDE
+# Fichiers de logs
+*.log
+
+# Résultats de scraping (dossiers et fichiers)
+scraping_results_*/
+excel_results/
+*.xlsx
+*.csv
+*.json
+
+# Fichiers spécifiques au système d'exploitation
+.DS_Store
+Thumbs.db
+.directory
+desktop.ini
+
+# Fichiers d'éditeurs et IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
+.project
+.pydevproject
+.settings/
 
-# Système d'exploitation
-.DS_Store
-Thumbs.db
+# Fichiers temporaires
+*.tmp
+*.bak
+*.cache 
